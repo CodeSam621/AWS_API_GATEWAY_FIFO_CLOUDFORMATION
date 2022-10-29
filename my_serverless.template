@@ -1,0 +1,129 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+	"Transform": "AWS::Serverless-2016-10-31",
+	"Description": "An AWS Serverless Application.",
+    "Parameters": {
+        "EnvironmentType": {
+			"Type": "String"
+		}
+    },
+    "Resources": {
+		"APIAccessRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [
+						{
+							"Effect": "Allow",
+							"Principal": {
+								"Service": [
+									"apigateway.amazonaws.com"
+								]
+							},
+							"Action": [
+								"sts:AssumeRole"
+							]
+						}
+					]
+				},
+				"Policies":[
+					{
+					"PolicyName" : "ApiReceiverPolicy",
+					"PolicyDocument": {
+						"Version": "2012-10-17",
+						"Statement": [
+							{
+								"Resource": {
+									"Fn::GetAtt": [
+										"ApiReceiverQueue",
+										"Arn"
+									]
+								},
+								"Effect": "Allow",
+								"Action": [
+									"sqs:SendMessage"
+								]
+							}
+						]
+					}
+				}]
+			}
+		
+		},
+		"ApiReceiverQueue": {
+			"Type": "AWS::SQS::Queue",
+			"Properties": {
+				"FifoQueue": true,
+				"QueueName": {
+					"Fn::Sub": "my-demo-queue-${EnvironmentType}.fifo"
+				},
+				"VisibilityTimeout": 600,
+				"MessageRetentionPeriod": 1209600
+			}
+		},
+		"MyDemoApi":{
+			"Type": "AWS::Serverless::Api",
+			"Properties": {
+				"StageName" :{
+					"Ref": "EnvironmentType"
+				},
+				"DefinitionBody": {
+					"swagger": "2.0",
+					"info": {
+						"version": "2016-03-31T18:25:32Z",
+						"title": {
+							"Ref": "AWS::StackName"
+						}
+					},
+					"schemes": [
+						"https"
+					],
+					"paths": {
+						"/exporter": {
+							"post": {
+								"responses": {
+									"200": {
+										"description": "200 response",
+										"content": {
+											"application/json": {
+												"schema": {
+													"$ref": "#/components/schemas/Empty"
+												}
+											}
+										}
+									}
+								},
+								"x-amazon-apigateway-integration": {
+									"credentials": {
+										"Fn::GetAtt": [
+											"APIAccessRole",
+											"Arn"
+										]
+									},
+									"uri": {
+										"Fn::Sub": "arn:aws:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/${ApiReceiverQueue.QueueName}"
+									},
+									"responses": {
+										"default": {
+											"statusCode": "200"
+										}
+									},
+									"requestParameters": {
+										"integration.request.header.Content-Type": "'application/x-www-form-urlencoded'"
+									},
+									"requestTemplates": {
+										"application/json": "#set($dedupId = $context.requestId)\n#set($groupId = $input.json('$.data.jobNumber'))\nAction=SendMessage&MessageBody=$input.body&MessageGroupId=$groupId&MessageDeduplicationId=$dedupId"
+									},
+									"passthroughBehavior": "never",
+									"httpMethod": "POST",
+									"type": "aws"
+								}
+							}
+						}						
+					}
+				}
+			}
+		}
+	}  
+}
